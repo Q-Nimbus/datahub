@@ -8,6 +8,7 @@ import com.linkedin.metadata.search.elasticsearch.index.entity.v3.SearchFieldRes
 import com.linkedin.metadata.search.elasticsearch.query.request.SearchFieldConfig;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -337,8 +338,9 @@ public final class StructuredQueryRouting {
    * text-only label searches its analyzed subfields. A source name whose label differs, such as
    * {@code fieldPaths}, searches the keyword path. A label written as itself, such as {@code name}
    * or {@code tags}, stays as written. A simple value on a raw keyword root is a case-insensitive
-   * term, which the keyword normalizer used to provide. A quoted value is exact and is not
-   * rewritten.
+   * term, which the keyword normalizer used to provide. A single wildcard on that root is queried
+   * as written and in lowercase, so {@code Orders*} matches {@code orders_fact}. A quoted value is
+   * exact and is not rewritten.
    */
   @Nullable
   private static QueryBuilder containQuery(
@@ -360,10 +362,16 @@ public final class StructuredQueryRouting {
       return analyzed.isEmpty() ? null : textOnlyQuery(text, analyzed);
     }
     if (field.equals(resolved.getPath())) {
-      String value = simpleValue(text);
       // Parsed URN keywords stay on query_string so the normalizer folds the query.
-      if (value != null && resolved.isIndexed() && !resolved.isParsedKeywordLabel()) {
-        return QueryBuilders.termQuery(resolved.getPath(), value).caseInsensitive(true);
+      if (resolved.isIndexed() && !resolved.isParsedKeywordLabel()) {
+        String value = simpleValue(text);
+        if (value != null) {
+          return QueryBuilders.termQuery(resolved.getPath(), value).caseInsensitive(true);
+        }
+        String pattern = wildcardValue(text);
+        if (pattern != null) {
+          return caseFoldedWildcard(resolved.getPath(), pattern);
+        }
       }
       return null;
     }
@@ -372,9 +380,28 @@ public final class StructuredQueryRouting {
     return clause(keywordPath + text.substring(colon), shared, false, true);
   }
 
-  /** A single field value with no query-string syntax. */
+  /** A single field value with no query-string syntax and no wildcard. */
   @Nullable
   private static String simpleValue(@Nonnull String text) {
+    String value = singleFieldValue(text);
+    if (value == null || value.indexOf('*') >= 0 || value.indexOf('?') >= 0) {
+      return null;
+    }
+    return value;
+  }
+
+  /** A single wildcard ({@code Orders*}). A space, quotes, or a group stays a query_string. */
+  @Nullable
+  private static String wildcardValue(@Nonnull String text) {
+    String value = singleFieldValue(text);
+    if (value == null || (value.indexOf('*') < 0 && value.indexOf('?') < 0)) {
+      return null;
+    }
+    return value;
+  }
+
+  @Nullable
+  private static String singleFieldValue(@Nonnull String text) {
     int colon = text.indexOf(':');
     if (colon < 0 || colon == text.length() - 1) {
       return null;
@@ -382,14 +409,30 @@ public final class StructuredQueryRouting {
     String value = text.substring(colon + 1).trim();
     if (value.isEmpty()
         || value.indexOf(' ') >= 0
-        || value.indexOf('*') >= 0
-        || value.indexOf('?') >= 0
         || value.indexOf('"') >= 0
         || value.indexOf('(') >= 0
         || value.indexOf(')') >= 0) {
       return null;
     }
     return value;
+  }
+
+  /**
+   * Wildcard on a raw keyword root. The pattern is also queried in lowercase so {@code Orders*}
+   * matches a stored {@code orders_fact}. {@code case_insensitive} stays off: on OpenSearch 3 it
+   * builds a case-folding automaton that can be null and fails the shard.
+   */
+  @Nonnull
+  private static QueryBuilder caseFoldedWildcard(@Nonnull String field, @Nonnull String pattern) {
+    QueryBuilder written = QueryBuilders.wildcardQuery(field, pattern);
+    String folded = pattern.toLowerCase(Locale.ROOT);
+    if (folded.equals(pattern)) {
+      return written;
+    }
+    return QueryBuilders.boolQuery()
+        .should(written)
+        .should(QueryBuilders.wildcardQuery(field, folded))
+        .minimumShouldMatch(1);
   }
 
   @Nonnull

@@ -591,6 +591,60 @@ public class V3SearchQueryBuilderTest {
     assertTrue(find(query, SimpleQueryStringBuilder.class).isEmpty());
   }
 
+  /** A single wildcard on a keyword root matches the written pattern and its lowercase form. */
+  @Test
+  public void testStructuredQueryWildcardFoldsCaseOnKeywordRoot() {
+    QueryBuilder mixed =
+        builder(null)
+            .buildQuery(OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:Orders*", true);
+    List<WildcardQueryBuilder> wildcards = find(mixed, WildcardQueryBuilder.class);
+    assertEquals(
+        wildcards.stream().map(WildcardQueryBuilder::value).collect(Collectors.toSet()),
+        Set.of("Orders*", "orders*"));
+    assertTrue(wildcards.stream().allMatch(wildcard -> "name".equals(wildcard.fieldName())));
+    assertTrue(wildcards.stream().noneMatch(WildcardQueryBuilder::caseInsensitive));
+    assertTrue(find(mixed, QueryStringQueryBuilder.class).isEmpty());
+
+    List<WildcardQueryBuilder> lower =
+        find(
+            builder(null)
+                .buildQuery(OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:orders*", true),
+            WildcardQueryBuilder.class);
+    assertEquals(lower.size(), 1, lower.toString());
+    assertEquals(lower.get(0).fieldName(), "name");
+    assertEquals(lower.get(0).value(), "orders*");
+    assertFalse(lower.get(0).caseInsensitive());
+
+    QueryStringQueryBuilder parsed =
+        only(
+            find(
+                builder(null)
+                    .buildQuery(OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "tags:Pii*", true),
+                QueryStringQueryBuilder.class));
+    assertEquals(parsed.queryString(), "tags:Pii*");
+
+    Set<String> description =
+        find(
+                builder(null)
+                    .buildQuery(
+                        OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "description:Orders*", true),
+                QueryStringQueryBuilder.class)
+            .stream()
+            .map(QueryStringQueryBuilder::queryString)
+            .collect(Collectors.toSet());
+    assertTrue(description.contains("description.text:Orders*"), description.toString());
+    assertTrue(description.contains("description.stemmed:Orders*"), description.toString());
+
+    QueryStringQueryBuilder grouped =
+        only(
+            find(
+                builder(null)
+                    .buildQuery(
+                        OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:(Orders*)", true),
+                QueryStringQueryBuilder.class));
+    assertEquals(grouped.queryString(), "name:(Orders*)");
+  }
+
   /**
    * A fielded /q runs that field once. An unquoted value on a keyword root is one case-insensitive
    * term. A property field stays one lenient query_string, so an unmapped property cannot fail a
