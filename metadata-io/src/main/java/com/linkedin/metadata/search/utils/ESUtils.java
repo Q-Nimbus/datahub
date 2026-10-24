@@ -979,9 +979,8 @@ public class ESUtils {
                 : SortOrder.DESC;
         FieldSortBuilder sortBuilder =
             new FieldSortBuilder(
-                    v3FieldResolver != null && v3FieldResolver.contains(sortCriterion.getField())
-                        ? v3FieldResolver.exactPath(sortCriterion.getField(), Intent.SORT)
-                        : sortCriterion.getField())
+                    sortField(
+                        opContext, sortCriterion.getField(), aspectRetriever, v3FieldResolver))
                 .order(esSortOrder);
         if (fieldTypeForDefault.isPresent()) {
           String esFieldtype = getElasticTypeForFieldType(fieldTypeForDefault.get());
@@ -1011,6 +1010,27 @@ public class ESUtils {
       searchSourceBuilder.sort(
           new FieldSortBuilder(DEFAULT_SEARCH_RESULTS_SORT_BY_FIELD).order(SortOrder.ASC));
     }
+  }
+
+  /**
+   * Field a sort reads. An entity field on Search V3 goes through {@link SearchFieldResolver}. A
+   * structured property is not an entity field, so it uses {@link #toV3KeywordField}, the same
+   * resolver filters and facets use: the keyword root the index maps, with a caller-supplied {@code
+   * .keyword} removed. V2 keeps the field the caller named.
+   */
+  @Nonnull
+  private static String sortField(
+      @Nullable OperationFingerprint opContext,
+      @Nonnull String field,
+      @Nullable AspectRetriever aspectRetriever,
+      @Nullable SearchFieldResolver v3FieldResolver) {
+    if (v3FieldResolver != null && v3FieldResolver.contains(field)) {
+      return v3FieldResolver.exactPath(field, Intent.SORT);
+    }
+    if (v3FieldResolver != null && StructuredPropertyUtils.isStructuredPropertyField(field)) {
+      return toV3KeywordField(opContext, field, aspectRetriever);
+    }
+    return field;
   }
 
   /**
