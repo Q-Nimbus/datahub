@@ -643,6 +643,40 @@ public class V3SearchQueryBuilderTest {
                         OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:(Orders*)", true),
                 QueryStringQueryBuilder.class));
     assertEquals(grouped.queryString(), "name:(Orders*)");
+
+    QueryStringQueryBuilder boosted =
+        only(
+            find(
+                builder(null)
+                    .buildQuery(
+                        OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:Orders*^2", true),
+                QueryStringQueryBuilder.class));
+    assertEquals(boosted.queryString(), "name:Orders*^2");
+    assertTrue(
+        find(
+                builder(null)
+                    .buildQuery(
+                        OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:Orders*^2", true),
+                WildcardQueryBuilder.class)
+            .isEmpty());
+
+    QueryStringQueryBuilder fuzzy =
+        only(
+            find(
+                builder(null)
+                    .buildQuery(
+                        OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:Orders*~1", true),
+                QueryStringQueryBuilder.class));
+    assertEquals(fuzzy.queryString(), "name:Orders*~1");
+
+    QueryStringQueryBuilder termBoost =
+        only(
+            find(
+                builder(null)
+                    .buildQuery(
+                        OP_CONTEXT, DATASET, STRUCTURED_QUERY_PREFIX + "name:orders^2", true),
+                QueryStringQueryBuilder.class));
+    assertEquals(termBoost.queryString(), "name:orders^2");
   }
 
   /**

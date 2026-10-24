@@ -390,7 +390,10 @@ public final class StructuredQueryRouting {
     return value;
   }
 
-  /** A single wildcard ({@code Orders*}). A space, quotes, or a group stays a query_string. */
+  /**
+   * A single wildcard ({@code Orders*}). A space, quotes, a group, a {@code ^} boost, or a {@code
+   * ~} fuzzy suffix stays a query_string, which is what applies that syntax.
+   */
   @Nullable
   private static String wildcardValue(@Nonnull String text) {
     String value = singleFieldValue(text);
@@ -411,7 +414,9 @@ public final class StructuredQueryRouting {
         || value.indexOf(' ') >= 0
         || value.indexOf('"') >= 0
         || value.indexOf('(') >= 0
-        || value.indexOf(')') >= 0) {
+        || value.indexOf(')') >= 0
+        || value.indexOf('^') >= 0
+        || value.indexOf('~') >= 0) {
       return null;
     }
     return value;
