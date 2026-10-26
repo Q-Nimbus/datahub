@@ -114,6 +114,8 @@ These are the sections on `searchTemplateProperties`. The bodies behind the boot
 | `clauses`                 | Extra bool clauses merged into that body.                                                                                                                      | [Query composition](#query-composition)                                          |
 | `functionScore`           | Score functions wrapped around the body. A filter snippet is for a boost that is not list membership.                                                          | [Query composition](#query-composition), [List boosts](#list-boosts)             |
 | `boosts`                  | List-membership weights. Each entry is a field, an injectable list, and a weight.                                                                              | [List boosts](#list-boosts)                                                      |
+| `fieldValueScores`        | Numeric multipliers for an index field or a structured property. Naming a property turns scoring on. Omitted extents come from the definition's `score`.       | [Numeric property scores](#numeric-property-scores)                              |
+| `entityTypeBoosts`        | Positive weights for named entity types, multiplied onto the rendered query. A weight of 1 is omitted. A request that names one entity type skips the section. |                                                                                  |
 | `rescore`                 | An engine rescore window after that wrapper, on a from/size search. Scroll drops it.                                                                           | [Query composition](#query-composition), [Search and scroll](#search-and-scroll) |
 | `ranking`                 | Preset that reorders the engine window after the query returns, on a from/size search. Scroll drops it.                                                        | [Ranking](#ranking), [Search and scroll](#search-and-scroll)                     |
 | `routes`                  | Ordered query matchers that choose another template before this body runs. An empty list pins this template. A miss stays here unless a default target is set. | [Selection](#selection)                                                          |
@@ -187,6 +189,8 @@ Each fragment is rewritten for structured-property definition URNs, then rendere
 | `highlights`              | `highlightFields`                                |
 | `sort`                    | Sort                                             |
 | `boosts`                  | List-membership weights                          |
+| `fieldValueScores`        | Numeric field and property scores                |
+| `entityTypeBoosts`        | Entity-type weights                              |
 | `queryFragments`          | Query holes                                      |
 
 After parent merge, a ranking preset other than `none`, a window sizer other than `fixed`, vector retrieval, a bridge, and a merge join fail the search. `knn` runs when the request includes the Document entity. The service does not drop that section and return keyword order. On scroll, `next` is unread, so a `next` this release cannot run does not fail the scroll. On a search, it does. Scroll still skips the sections that a cursor cannot continue. See [Search and scroll](#search-and-scroll) and [Document rerank](#document-rerank).
@@ -263,7 +267,7 @@ boosts:
     weight: 1.5
 ```
 
-`functionScore` stays the wrapper for a boost that is not list membership. It holds `functions`, `score_mode`, and `boost_mode`. Each function is a score function the engine accepts, such as `weight`, `field_value_factor`, or a decay function. A filter on that function is a snippet the author writes for a term on one literal, a numeric field, or a decay. The snippet and the function's other fields reference parameters, the same way a weight references `{{deprecatedBoost}}`. The service supplies those values and leaves that function list as the author wrote it. A snippet that references `viewerUrn`, `viewerGroupsJson`, `viewerDomainsJson`, or `domainsJson` is rejected at write time. A clause may still reference those values to narrow.
+`functionScore` stays the wrapper for a boost that is not list membership. It holds `functions`, `score_mode`, and `boost_mode`. Shipped keyword templates set `score_mode` to `multiply`, so each matching weight scales the text score and a document that misses a filter is unchanged. Each function is a score function the engine accepts, such as `weight`, `field_value_factor`, or a decay function. A filter on that function is a snippet the author writes for a term on one literal, a numeric field, or a decay. The snippet and the function's other fields reference parameters, the same way a weight references `{{deprecatedBoost}}`. The service supplies those values and leaves that function list as the author wrote it. A snippet that references `viewerUrn`, `viewerGroupsJson`, `viewerDomainsJson`, or `domainsJson` is rejected at write time. A clause may still reference those values to narrow.
 
 ### Highlight fields
 
@@ -288,7 +292,7 @@ clauses: |
 functionScore: |
   {
     "functions": [
-      { "filter": { "term": { "materialized": { "value": true } } }, "weight": 0.25 }
+      { "filter": { "term": { "deprecated": { "value": true } } }, "weight": 0.5 }
     ],
     "score_mode": "multiply",
     "boost_mode": "multiply"
@@ -853,6 +857,28 @@ The examples are in [Examples](#examples). A string, rich-text, or URN value mat
 
 A string or rich-text structured property keeps its keyword form and also has one analyzed text form, using the shared `word_delimited` and `query_word_delimited` analyzers on the `.text` multi-field. URN, date, and number stay keyword, date, or number. Nothing is copied into `_search.structuredProperties` or `customProperties`. Adding the analyzed form is a Search V3 mapping change and a rebuild. Search V2 does not index the analyzed form. Search V2 and Search V2.5 keep their current structured-property full-text behavior until those paths are deprecated.
 
+#### Numeric property scores
+
+`fieldValueScores` names the property URN. That entry is what turns scoring on. A `score` on the property definition does not. The shipped templates do not set `fieldValueScores`. A deployment adds it by writing the section on its own template.
+
+Omitted `inputMin`, `inputMax`, and `maxMultiplier` come from the definition's `score`. A value on the template replaces the definition. If the definition and the template together still lack a finite range with `inputMax` greater than `inputMin` and a multiplier of at least 1, that entry is skipped.
+
+A raw index field has no definition, so the template sets all three extents.
+
+Values at or below `inputMin` stay at multiplier 1. Values at or above `inputMax` get `maxMultiplier`. The span maps as `1 + slope * (value - inputMin)`, where `slope` is `(maxMultiplier - 1) / (inputMax - inputMin)`. A missing field stays at 1. A multi-valued field uses its smallest value.
+
+```yaml
+fieldValueScores:
+  - propertyUrn: urn:li:structuredProperty:io.example.priority
+```
+
+```yaml
+score:
+  inputMin: 0
+  inputMax: 100
+  maxMultiplier: 2
+```
+
 #### Name and value
 
 A template may also request name-and-value matching. Search V3 still retrieves an asset by the assigned value on that definition's field. When the query contains the property's display name or qualified name and the unmatched remainder equals a value assigned to the same definition, an additional clause matches the asset. A name alone does not retrieve an asset that merely possesses the property. The name and the value resolve to the same definition. One property's value does not satisfy another property's name.
@@ -900,7 +926,7 @@ Search V2 and Search V2.5 keep their current structured-property full-text behav
 
 `toElasticsearchFieldName` returns the suffix only. The caller adds the `structuredProperties.` prefix for every definition. An unversioned definition is the qualified name with each `.` replaced by `_`, so `certification.status` becomes `structuredProperties.certification_status`. A versioned definition is `structuredProperties._versioned.<name>.<version>.<type>`. That versioned path is the resolver's output. A caller passes a definition URN, or the logical name `structuredProperties.<qualified name>`. Passing the versioned path in as a logical name is rejected, because lookup would read it as a qualified name.
 
-The template names the form. A structured-property reference resolves to the indexed field. The keyword form is that field, with `.keyword` only for string and rich text. The analyzed form is the same field plus the `.text` multi-field. The builder substitutes those paths into the body. It does not emit a clause because a mode was set. `.keyword` and `.text` are rejected on a date, a number, or a URN. When two qualified names sanitize to one field and the mappings are identical, the collision resolver keeps the lexicographically smallest URN. When the mappings differ, it omits the field. A template that names an omitted field is rejected at write time.
+The template names the form. A structured-property reference resolves to the indexed field. The keyword form is that field. A template may still write `.keyword` after a string or rich-text reference; rendering drops it, because Search V3 does not map that subfield. The analyzed form is the same field plus the `.text` multi-field. The builder substitutes those paths into the body. It does not emit a clause because a mode was set. `.keyword` and `.text` are rejected on a date, a number, or a URN. When two qualified names sanitize to one field and the mappings are identical, the collision resolver keeps the lexicographically smallest URN. When the mappings differ, it omits the field. A template that names an omitted field is rejected at write time.
 
 Inline text injects the URN as a Mustache constant. The tag body is the whole URN. The form is text after the tag, from a closed set: `.keyword` or `.text`.
 
@@ -909,7 +935,7 @@ Inline text injects the URN as a Mustache constant. The tag body is the whole UR
 {{urn:li:structuredProperty:certification.status}}.text
 ```
 
-`query`, `clauses`, `functionScore`, `rescore`, `aggregations`, `sort`, and `highlightFields` use that constant. Rendering replaces the tag with the indexed field and leaves the suffix in place.
+`query`, `clauses`, `functionScore`, `rescore`, `aggregations`, `sort`, and `highlightFields` use that constant. Rendering replaces the tag with the indexed field. A `.text` suffix stays. A `.keyword` suffix is dropped, because the property field is the keyword.
 
 `fields` add, remove, override, and replace name the definition URN on `fieldName`. The form is named in the body, not on the entry. The resolved field is the merge key, so a `remove` and an `override` of the same definition name the same field. Removing it drops the weighted-list entry, the whole-value term, and a rendered clause that targeted only that field, for either form. A `boosts` entry may name `keyword` or `text` as `subfield` when that boost needs one form. A reference that does not resolve to a definition is rejected at write time. Rendering resolves the URN again from the current definition, then the body is parsed.
 
@@ -923,7 +949,7 @@ A read that only needs those projected fields would build the aspect from the hi
 
 ### Analyzers and hybrid documents
 
-Analyzed text stays on the shared text fields. A structured property stays on its per-definition field. Search V3 indexes one analyzed text form beside the keyword form for string and rich text, using the shared `word_delimited` and `query_word_delimited` analyzers on `.text`. The template names `.keyword` or `.text`. A property in the queried set gets a whole-value term at its field weight and, for string and rich text, an entry in the weighted field list. A property name is not copied onto the asset. Search V2 does not index the analyzed form. See [Structured properties](#structured-properties). Ordinary aspect fields stay keywords, numbers, dates, and booleans. Word-gram fields, ngram fields, and the per-field analyzer chain do not come forward.
+Analyzed text stays on the shared text fields. A structured property stays on its per-definition field. Search V3 indexes one analyzed text form beside the keyword form for string and rich text, using the shared `word_delimited` and `query_word_delimited` analyzers on `.text`. The template names the keyword field or `.text`. A written `.keyword` suffix names that same keyword field. A property in the queried set gets a whole-value term at its field weight and, for string and rich text, an entry in the weighted field list. A property name is not copied onto the asset. Search V2 does not index the analyzed form. See [Structured properties](#structured-properties). Ordinary aspect fields stay keywords, numbers, dates, and booleans. Word-gram fields, ngram fields, and the per-field analyzer chain do not come forward.
 
 A keyword field filtered either with or without case is stored in both forms: the original value, and the value lowercased and ASCII-folded. An annotation-derived URN is two fields. The logical name is the parsed name. `<field>_urn` is the full URN used by filters, facets, sorts, and ranges, and `<field>_urn.lowercase` is the case-insensitive full URN. Callers still use `tags`, `owners`, and `parent`. Full text reads the logical field only when that field is included in full text, so `owners` has neither `text` nor `stemmed`. The document `urn` is the exact entity URN, and `urn_name` is its parsed identity and is not full text. A string or rich-text structured property follows the dual-form rule. A structured-property URN stays on `structuredProperties.<field>` and `__urn_name`. A date or a number has no case form.
 
