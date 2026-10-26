@@ -1060,7 +1060,54 @@ public class SearchRequestHandlerTest extends AbstractTestNGSpringContextTests {
     assertFalse(query.contains("name_1.keyword"), query);
     assertTrue(query.contains("wildcard"), query);
     assertTrue(query.contains("*user_id*"), query);
+    assertFalse(wildcardUsesCaseInsensitive(query), query);
     assertFalse(query.contains("description.text"), query);
+  }
+
+  @Test
+  public void testV3KeywordWildcardFoldsCase() {
+    String contain = v3Filter(buildCriterion("name", Condition.CONTAIN, "Orders"));
+    assertTrue(contain.contains("*Orders*"), contain);
+    assertTrue(contain.contains("*orders*"), contain);
+    assertFalse(wildcardUsesCaseInsensitive(contain), contain);
+    assertFalse(contain.contains("name.keyword"), contain);
+
+    String lower = v3Filter(buildCriterion("name", Condition.CONTAIN, "orders"));
+    assertEquals(count(lower, "\"wildcard\""), 2, lower);
+    assertFalse(wildcardUsesCaseInsensitive(lower), lower);
+
+    String prefix = v3Filter(buildCriterion("name", Condition.START_WITH, "Ord"));
+    assertTrue(prefix.contains("Ord*"), prefix);
+    assertTrue(prefix.contains("ord*"), prefix);
+    assertFalse(wildcardUsesCaseInsensitive(prefix), prefix);
+
+    String suffix = v3Filter(buildCriterion("name", Condition.END_WITH, "ERS"));
+    assertTrue(suffix.contains("*ERS"), suffix);
+    assertTrue(suffix.contains("*ers"), suffix);
+    assertFalse(wildcardUsesCaseInsensitive(suffix), suffix);
+  }
+
+  /** The query type and the pattern key each contain {@code "wildcard"}. */
+  private static boolean wildcardUsesCaseInsensitive(String query) {
+    int from = 0;
+    while ((from = query.indexOf("\"wildcard\"", from)) >= 0) {
+      String window = query.substring(from, Math.min(query.length(), from + 220));
+      if (window.contains("case_insensitive")) {
+        return true;
+      }
+      from += "\"wildcard\"".length();
+    }
+    return false;
+  }
+
+  private static int count(String text, String needle) {
+    int found = 0;
+    int from = 0;
+    while ((from = text.indexOf(needle, from)) >= 0) {
+      found++;
+      from += needle.length();
+    }
+    return found;
   }
 
   @Test

@@ -84,6 +84,7 @@ import org.opensearch.index.query.Operator;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.index.query.RangeQueryBuilder;
+import org.opensearch.index.query.WildcardQueryBuilder;
 import org.opensearch.search.builder.PointInTimeBuilder;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.slice.SliceBuilder;
@@ -1483,19 +1484,36 @@ public class ESUtils {
       boolean resolvedForV3,
       boolean v3Index) {
     BoolQueryBuilder boolQuery = QueryBuilders.boolQuery().minimumShouldMatch(1);
+    String name = queryName != null ? queryName : fieldName;
 
     for (String value : criterion.getValues()) {
-      boolQuery.should(
-          QueryBuilders.wildcardQuery(
-                  resolvedForV3
-                      ? fieldName
-                      : toKeywordField(
-                          opContext, criterion.getField(), isTimeseries, aspectRetriever, v3Index),
-                  String.format(wildcardPattern, ESUtils.escapeReservedCharacters(value.trim())))
-              .queryName(queryName != null ? queryName : fieldName)
-              .caseInsensitive(true));
+      String field =
+          resolvedForV3
+              ? fieldName
+              : toKeywordField(
+                  opContext, criterion.getField(), isTimeseries, aspectRetriever, v3Index);
+      String pattern =
+          String.format(wildcardPattern, ESUtils.escapeReservedCharacters(value.trim()));
+      if (v3Index) {
+        // A V3 keyword root keeps the stored casing and has no .keyword subfield. case_insensitive
+        // on a wildcard fails the shard on OpenSearch 3, so match the written pattern and its
+        // lowercase form. Accents stay as written.
+        boolQuery.should(wildcard(field, pattern, name));
+        String folded = pattern.toLowerCase(Locale.ROOT);
+        if (!folded.equals(pattern)) {
+          boolQuery.should(wildcard(field, folded, name));
+        }
+      } else {
+        boolQuery.should(wildcard(field, pattern, name).caseInsensitive(true));
+      }
     }
     return boolQuery;
+  }
+
+  @Nonnull
+  private static WildcardQueryBuilder wildcard(
+      @Nonnull String field, @Nonnull String pattern, @Nonnull String name) {
+    return QueryBuilders.wildcardQuery(field, pattern).queryName(name);
   }
 
   /**
