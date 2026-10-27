@@ -679,6 +679,14 @@ public class ESUtils {
       @Nonnull OperationContext opContext,
       @Nonnull QueryFilterRewriteChain queryFilterRewriteChain,
       @Nullable SearchFieldResolver v3FieldResolver) {
+    if (v3FieldResolver != null
+        && !criterion.getField().startsWith(STRUCTURED_PROPERTY_MAPPING_FIELD_PREFIX)) {
+      Optional<String> unlabeledSource =
+          v3FieldResolver.unlabeledHasValuesSource(criterion.getField());
+      if (unlabeledSource.isPresent()) {
+        return unlabeledHasValuesQuery(v3FieldResolver, criterion, unlabeledSource.get());
+      }
+    }
     final boolean resolvedForV3 =
         v3FieldResolver != null
             && !criterion.getField().startsWith(STRUCTURED_PROPERTY_MAPPING_FIELD_PREFIX)
@@ -801,6 +809,44 @@ public class ESUtils {
         criterion.getCondition(),
         criterion.getField());
     return null;
+  }
+
+  /**
+   * A {@code has*} name with no {@code searchLabel} is not mapped. True and {@code EXISTS} match
+   * documents where the source field exists. False and {@code IS_NULL} match documents where it is
+   * missing.
+   */
+  @Nonnull
+  private static QueryBuilder unlabeledHasValuesQuery(
+      @Nonnull SearchFieldResolver resolver,
+      @Nonnull Criterion criterion,
+      @Nonnull String sourceField) {
+    String path = resolver.exactPath(sourceField, Intent.FILTER);
+    boolean missing = unlabeledHasValuesMissing(criterion);
+    if (criterion.isNegated()) {
+      missing = !missing;
+    }
+    QueryBuilder exists = QueryBuilders.existsQuery(path);
+    if (missing) {
+      return QueryBuilders.boolQuery().mustNot(exists).queryName(criterion.getField());
+    }
+    return QueryBuilders.boolQuery().must(exists).queryName(criterion.getField());
+  }
+
+  private static boolean unlabeledHasValuesMissing(@Nonnull Criterion criterion) {
+    Condition condition = criterion.getCondition();
+    if (condition == Condition.IS_NULL) {
+      return true;
+    }
+    if (condition == Condition.EXISTS) {
+      return false;
+    }
+    if ((condition == Condition.EQUAL || condition == Condition.IEQUAL)
+        && criterion.hasValues()
+        && criterion.getValues().size() == 1) {
+      return !Boolean.parseBoolean(criterion.getValues().get(0));
+    }
+    return false;
   }
 
   @Nonnull
@@ -944,9 +990,15 @@ public class ESUtils {
     } else {
       sortCriteria = sortCriteria != null ? sortCriteria : Collections.emptyList();
       for (SortCriterion sortCriterion : sortCriteria) {
+        final String requestedField =
+            v3FieldResolver == null
+                ? sortCriterion.getField()
+                : v3FieldResolver
+                    .unlabeledHasValuesSource(sortCriterion.getField())
+                    .orElse(sortCriterion.getField());
         // urn is a synthetic keyword root on every entity index, not an annotated entity field.
         Optional<SearchableAnnotation.FieldType> fieldTypeForDefault =
-            DEFAULT_SEARCH_RESULTS_SORT_BY_FIELD.equals(sortCriterion.getField())
+            DEFAULT_SEARCH_RESULTS_SORT_BY_FIELD.equals(requestedField)
                 ? Optional.of(SearchableAnnotation.FieldType.KEYWORD)
                 : Optional.empty();
         for (EntitySpec entitySpec : entitySpecs) {
@@ -956,8 +1008,8 @@ public class ESUtils {
           List<SearchableFieldSpec> fieldSpecs = entitySpec.getSearchableFieldSpecs();
           for (SearchableFieldSpec fieldSpec : fieldSpecs) {
             SearchableAnnotation annotation = fieldSpec.getSearchableAnnotation();
-            if (annotation.getFieldName().equals(sortCriterion.getField())
-                || annotation.getFieldNameAliases().contains(sortCriterion.getField())) {
+            if (annotation.getFieldName().equals(requestedField)
+                || annotation.getFieldNameAliases().contains(requestedField)) {
               fieldTypeForDefault = Optional.of(fieldSpec.getSearchableAnnotation().getFieldType());
               break;
             }
@@ -968,10 +1020,10 @@ public class ESUtils {
         }
         if (fieldTypeForDefault.isEmpty()
             && !entitySpecs.isEmpty()
-            && !StructuredPropertyUtils.isStructuredPropertyField(sortCriterion.getField())) {
+            && !StructuredPropertyUtils.isStructuredPropertyField(requestedField)) {
           log.warn(
               "Sort criterion field "
-                  + sortCriterion.getField()
+                  + requestedField
                   + " was not found in any entity spec to be searched");
         }
         final SortOrder esSortOrder =
@@ -980,8 +1032,7 @@ public class ESUtils {
                 : SortOrder.DESC;
         FieldSortBuilder sortBuilder =
             new FieldSortBuilder(
-                    sortField(
-                        opContext, sortCriterion.getField(), aspectRetriever, v3FieldResolver))
+                    sortField(opContext, requestedField, aspectRetriever, v3FieldResolver))
                 .order(esSortOrder);
         if (fieldTypeForDefault.isPresent()) {
           String esFieldtype = getElasticTypeForFieldType(fieldTypeForDefault.get());

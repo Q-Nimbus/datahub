@@ -75,6 +75,30 @@ public class SearchFieldResolverTest {
   }
 
   @Test
+  public void testFieldWithoutSearchLabelDropsHasValues() {
+    SearchFieldResolver resolver =
+        resolver(
+            field(
+                "rowCount",
+                null,
+                List.of(FieldMapping.root(FieldMapping.Type.COUNT)),
+                "hasRowCount"),
+            field(
+                "description",
+                "description",
+                List.of(FieldMapping.root(FieldMapping.Type.KEYWORD, false, false)),
+                "hasDescription"));
+
+    assertFalse(resolver.contains("hasRowCount"));
+    assertEquals(resolver.unlabeledHasValuesSource("hasRowCount"), Optional.of("rowCount"));
+    assertEquals(resolver.hasValuesFieldName("rowCount"), Optional.empty());
+    assertTrue(resolver.supports("rowCount", Intent.FILTER));
+    assertTrue(resolver.contains("hasDescription"));
+    assertEquals(resolver.unlabeledHasValuesSource("hasDescription"), Optional.empty());
+    assertTrue(resolver.falseIsMissing("hasDescription"));
+  }
+
+  @Test
   public void testExactPathsFollowResolvedRootType() {
     SearchFieldResolver resolver =
         resolver(

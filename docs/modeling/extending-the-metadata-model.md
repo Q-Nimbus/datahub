@@ -445,11 +445,14 @@ It takes the following parameters:
   ranks higher.
 
 - **hasValuesFieldName**: string (optional) - If set, add an index field of the given name that checks whether the field
-  exists. On Search V3, every field that copies into the same `searchLabel` writes that boolean, and every source of the
-  label declares this same name. The
-  boolean is stored under the aspect only when the source is populated, and `copy_to` collects those
+  exists. Search V2 and V2.5 index that boolean for every field that declares it, storing both `true` and `false`.
+  Search V3 indexes it only when the field has a `searchLabel`. Every source of that label writes the same boolean.
+  The boolean is stored under the aspect only when the source is populated, and `copy_to` collects those
   trues onto the shared name. It is not stored as `false`: a false filter matches documents where
-  the field is missing. A field with no `searchLabel` still stores `true` and `false`.
+  the field is missing. A Search V3 field with no `searchLabel` has no boolean. Presence is an
+  `EXISTS` or `IS_NULL` query on the field itself. A filter or sort that still names the old boolean
+  is rewritten onto that field: a true or `EXISTS` filter becomes `exists`, a false or `IS_NULL` filter
+  matches documents where the field is missing, and a sort reads the field.
 
 - **numValuesFieldName**: string (optional) - If set, add an index field of the given name that checks the number of
   elements

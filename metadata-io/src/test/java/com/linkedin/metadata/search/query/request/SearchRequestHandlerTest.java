@@ -1173,9 +1173,30 @@ public class SearchRequestHandlerTest extends AbstractTestNGSpringContextTests {
                 V3_READ_CONFIG.getEntityIndex(),
                 cachedV3Resolver(V3_READ_CONFIG.getEntityIndex()))
             .toString();
-    assertTrue(unlabeledFalse.contains("\"hasRowCount\""), unlabeledFalse);
-    assertTrue(unlabeledFalse.contains("\"false\""), unlabeledFalse);
+    assertTrue(unlabeledFalse.contains("must_not"), unlabeledFalse);
+    assertTrue(unlabeledFalse.contains("exists"), unlabeledFalse);
+    assertTrue(unlabeledFalse.contains("\"field\" : \"rowCount\""), unlabeledFalse);
     assertFalse(unlabeledFalse.contains("\"field\" : \"hasRowCount\""), unlabeledFalse);
+
+    String unlabeledTrue =
+        SearchRequestHandler.getFilterQuery(
+                operationContext,
+                List.of("dataset"),
+                new Filter()
+                    .setOr(
+                        new ConjunctiveCriterionArray(
+                            new ConjunctiveCriterion()
+                                .setAnd(
+                                    new CriterionArray(
+                                        buildCriterion("hasRowCount", Condition.EQUAL, "true"))))),
+                new HashMap<>(),
+                QueryFilterRewriteChain.EMPTY,
+                V3_READ_CONFIG.getEntityIndex(),
+                cachedV3Resolver(V3_READ_CONFIG.getEntityIndex()))
+            .toString();
+    assertTrue(unlabeledTrue.contains("exists"), unlabeledTrue);
+    assertTrue(unlabeledTrue.contains("\"field\" : \"rowCount\""), unlabeledTrue);
+    assertFalse(unlabeledTrue.contains("\"field\" : \"hasRowCount\""), unlabeledTrue);
 
     SearchRequestHandler handler =
         SearchRequestHandler.getBuilder(
@@ -1210,6 +1231,34 @@ public class SearchRequestHandlerTest extends AbstractTestNGSpringContextTests {
                 0,
                 10,
                 List.of()));
+    String sortedByRemovedBoolean =
+        handler
+            .getSearchRequest(
+                operationContext.withSearchFlags(flags -> flags.setSkipAggregates(true)),
+                "*",
+                null,
+                List.of(new SortCriterion().setField("hasRowCount").setOrder(SortOrder.DESCENDING)),
+                0,
+                10,
+                List.of())
+            .source()
+            .toString();
+    assertTrue(sortedByRemovedBoolean.contains("\"rowCount\""), sortedByRemovedBoolean);
+    assertFalse(sortedByRemovedBoolean.contains("hasRowCount"), sortedByRemovedBoolean);
+    String sortedByLabel =
+        handler
+            .getSearchRequest(
+                operationContext.withSearchFlags(flags -> flags.setSkipAggregates(true)),
+                "*",
+                null,
+                List.of(
+                    new SortCriterion().setField("hasDescription").setOrder(SortOrder.DESCENDING)),
+                0,
+                10,
+                List.of())
+            .source()
+            .toString();
+    assertTrue(sortedByLabel.contains("\"hasDescription\""), sortedByLabel);
   }
 
   private String v3Filter(Criterion... criteria) {

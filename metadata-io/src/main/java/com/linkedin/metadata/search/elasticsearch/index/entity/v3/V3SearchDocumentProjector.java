@@ -234,7 +234,11 @@ public class V3SearchDocumentProjector {
     }
   }
 
-  /** A dedicated has* boolean is indexed on the root. The aspect copy exists only to OR a label. */
+  /**
+   * A field with no searchLabel does not index a has* boolean. Drop the value the V2 transformer
+   * wrote, and do not null the root: a partial update must not clear a name this index no longer
+   * maps.
+   */
   private static void omitDedicatedHasValues(
       @Nonnull final AspectSpec aspectSpec, @Nonnull final ObjectNode aspectFields) {
     for (SearchableFieldSpec fieldSpec : aspectSpec.getSearchableFieldSpecs()) {
@@ -451,6 +455,7 @@ public class V3SearchDocumentProjector {
 
     final ObjectNode aspectFields = projectedFields.deepCopy();
     aspectFields.remove(URN_FIELD);
+    omitDedicatedHasValues(aspectSpec, rootFields);
     omitDedicatedHasValues(aspectSpec, aspectFields);
     for (String name : sharedHasValues) {
       // Drop a stored root true or false. The indexed term comes from copy_to.

@@ -43,6 +43,7 @@ public final class SearchFieldResolver {
   private final Map<String, Field> fields;
   private final Map<String, Field> exactSourceFields;
   private final Set<String> sharedHasValues;
+  private final Map<String, String> unlabeledHasValuesSources;
 
   public SearchFieldResolver(@Nonnull Collection<EntitySpec> entitySpecs) {
     Map<String, MutableField> byName = new LinkedHashMap<>();
@@ -50,6 +51,7 @@ public final class SearchFieldResolver {
     Map<String, List<SearchableFieldSpec>> byLabel = new LinkedHashMap<>();
     Map<String, List<String>> labelContributors = new LinkedHashMap<>();
     Set<String> sharedHasValuesNames = new LinkedHashSet<>();
+    Map<String, String> unlabeledHasValues = new LinkedHashMap<>();
     Set<String> splitSourceNames = new LinkedHashSet<>();
     Map<String, MutableField> aliasedTo = new LinkedHashMap<>();
 
@@ -66,7 +68,8 @@ public final class SearchFieldResolver {
               sources,
               byLabel,
               labelContributors,
-              sharedHasValuesNames);
+              sharedHasValuesNames,
+              unlabeledHasValues);
         }
       } else {
         for (AspectSpec aspect : aspects) {
@@ -79,7 +82,8 @@ public final class SearchFieldResolver {
                 sources,
                 byLabel,
                 labelContributors,
-                sharedHasValuesNames);
+                sharedHasValuesNames,
+                unlabeledHasValues);
           }
         }
       }
@@ -174,6 +178,17 @@ public final class SearchFieldResolver {
         });
     exactSourceFields = Collections.unmodifiableMap(exactSources);
     sharedHasValues = Set.copyOf(sharedHasValuesNames);
+    unlabeledHasValuesSources = Map.copyOf(unlabeledHasValues);
+  }
+
+  /**
+   * Source field for a {@code has*} name Search V3 does not map. The boolean is kept only for a
+   * {@code searchLabel}. A filter or sort that still names the old boolean reads this field.
+   */
+  @Nonnull
+  public Optional<String> unlabeledHasValuesSource(@Nonnull String fieldName) {
+    String source = unlabeledHasValuesSources.get(parent(fieldName));
+    return source == null ? Optional.empty() : Optional.of(source);
   }
 
   /** A shared-label hasValues field stores only true. False is the field being missing. */
@@ -462,7 +477,8 @@ public final class SearchFieldResolver {
       Map<String, MutableField> sources,
       Map<String, List<SearchableFieldSpec>> byLabel,
       Map<String, List<String>> labelContributors,
-      Set<String> sharedHasValuesNames) {
+      Set<String> sharedHasValuesNames,
+      Map<String, String> unlabeledHasValues) {
     if (!spec.getSearchableAnnotation().isV3Searchable()) {
       return;
     }
@@ -474,7 +490,6 @@ public final class SearchFieldResolver {
             annotation.getFieldName(), ignored -> new MutableField(annotation.getFieldName()));
     source.addRoot(root, described);
     source.addSource(annotation.getFieldName());
-    annotation.getHasValuesFieldName().ifPresent(source::setHasValues);
     sources.put(annotation.getFieldName(), source);
     Optional.ofNullable(annotation.getFieldNameAliases())
         .orElse(List.of())
@@ -483,19 +498,37 @@ public final class SearchFieldResolver {
                 byName
                     .computeIfAbsent(alias, ignored -> new MutableField(annotation.getFieldName()))
                     .merge(source));
-    annotation
-        .indexedHasValuesFieldName()
-        .ifPresent(
-            field ->
-                byName
-                    .computeIfAbsent(field, ignored -> new MutableField(field))
-                    .addRoot(FieldMapping.root(Type.BOOLEAN), described + " hasValues=" + field));
-    SearchableAnnotation.sharedHasValuesName(annotation)
-        .ifPresent(
-            field ->
-                byName
-                    .computeIfAbsent(field, ignored -> new MutableField(field))
-                    .addRoot(FieldMapping.root(Type.BOOLEAN), described + " hasValues=" + field));
+    if (annotation.indexedFieldName().isPresent()) {
+      annotation.getHasValuesFieldName().ifPresent(source::setHasValues);
+      annotation
+          .indexedHasValuesFieldName()
+          .ifPresent(
+              field ->
+                  byName
+                      .computeIfAbsent(field, ignored -> new MutableField(field))
+                      .addRoot(FieldMapping.root(Type.BOOLEAN), described + " hasValues=" + field));
+      SearchableAnnotation.sharedHasValuesName(annotation)
+          .ifPresent(
+              field ->
+                  byName
+                      .computeIfAbsent(field, ignored -> new MutableField(field))
+                      .addRoot(FieldMapping.root(Type.BOOLEAN), described + " hasValues=" + field));
+    } else {
+      annotation
+          .getHasValuesFieldName()
+          .ifPresent(
+              name ->
+                  recordUnlabeledHasValues(unlabeledHasValues, name, annotation.getFieldName()));
+      annotation
+          .indexedHasValuesFieldName()
+          .ifPresent(
+              name ->
+                  recordUnlabeledHasValues(unlabeledHasValues, name, annotation.getFieldName()));
+      SearchableAnnotation.sharedHasValuesName(annotation)
+          .ifPresent(
+              name ->
+                  recordUnlabeledHasValues(unlabeledHasValues, name, annotation.getFieldName()));
+    }
     annotation
         .getNumValuesFieldName()
         .ifPresent(
@@ -515,6 +548,23 @@ public final class SearchFieldResolver {
               SearchableAnnotation.sharedHasValuesName(annotation)
                   .ifPresent(sharedHasValuesNames::add);
             });
+  }
+
+  private static void recordUnlabeledHasValues(
+      @Nonnull Map<String, String> unlabeled,
+      @Nonnull String hasName,
+      @Nonnull String sourceField) {
+    String previous = unlabeled.putIfAbsent(hasName, sourceField);
+    if (previous != null && !previous.equals(sourceField)) {
+      throw new IllegalArgumentException(
+          "Search V3 has-field '"
+              + hasName
+              + "' is declared by both '"
+              + previous
+              + "' and '"
+              + sourceField
+              + "'");
+    }
   }
 
   /** The boolean attached to a label: the shared V3 name when set, otherwise the top-level name. */

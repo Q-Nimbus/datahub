@@ -310,7 +310,7 @@ public class MultiEntityMappingsBuilderTest {
                       assertTrue(aspectFields.containsKey(name), where + name);
                     } else {
                       assertFalse(aspectFields.containsKey(name), where + name);
-                      assertTrue(root.containsKey(name), entitySpec.getName() + " root " + name);
+                      assertFalse(root.containsKey(name), entitySpec.getName() + " root " + name);
                     }
                   });
           annotation
@@ -644,9 +644,6 @@ public class MultiEntityMappingsBuilderTest {
             "hasDomain",
             "hasTags",
             "hasGlossaryTerms",
-            "hasActiveIncidents",
-            "hasRowCount",
-            "hasColumnCount",
             "deprecated")) {
       assertEquals(
           ((Map<String, Object>) datasetProperties.get(field)).get("type"), "boolean", field);
@@ -809,8 +806,10 @@ public class MultiEntityMappingsBuilderTest {
         ((Map<String, Object>) datasetProperties.get("verifiedForms_urn")).get("type"), "keyword");
     assertNull(getAspectFieldMapping(datasetProperties, "forms", "verifiedForms__urn_name"));
     assertNull(getAspectFieldMapping(datasetProperties, "datasetProfile", "hasSizeInBytes"));
-    assertEquals(
-        ((Map<String, Object>) datasetProperties.get("hasSizeInBytes")).get("type"), "boolean");
+    assertFalse(datasetProperties.containsKey("hasSizeInBytes"));
+    assertFalse(datasetProperties.containsKey("hasRowCount"));
+    assertFalse(datasetProperties.containsKey("hasColumnCount"));
+    assertFalse(datasetProperties.containsKey("hasActiveIncidents"));
     Map<String, Object> aspectTagName =
         getAspectFieldMapping(datasetProperties, "globalTags", "tags__urn_name");
     assertEquals(aspectTagName.get("copy_to"), List.of("tags"));
@@ -1792,6 +1791,10 @@ public class MultiEntityMappingsBuilderTest {
     EntitySpec entitySpec = createMockEntitySpec("entity1", "description", FieldType.TEXT);
     SearchableFieldSpec fieldSpec =
         entitySpec.getAspectSpecs().get(0).getSearchableFieldSpecs().get(0);
+    when(fieldSpec.getSearchableAnnotation().getSearchLabel())
+        .thenReturn(Optional.of("description"));
+    when(fieldSpec.getSearchableAnnotation().indexedFieldName())
+        .thenReturn(Optional.of("description"));
     when(fieldSpec.getSearchableAnnotation().getHasValuesFieldName())
         .thenReturn(Optional.of("hasDescription"));
     when(fieldSpec.getSearchableAnnotation().indexedHasValuesFieldName())
@@ -1925,14 +1928,14 @@ public class MultiEntityMappingsBuilderTest {
         ((Map<String, Object>) dataProductProperties.get("parentDataProduct_urn")).get("type"),
         "keyword");
     assertNull(dataProductBoolean);
-    assertEquals(
-        ((Map<String, Object>) dataProductProperties.get("hasParentDataProduct")).get("type"),
-        "boolean");
+    assertFalse(dataProductProperties.containsKey("hasParentDataProduct"));
     assertEquals(
         resolver.exactPath("parentDataProduct", SearchFieldResolver.Intent.EXACT),
         "parentDataProduct_urn");
+    assertEquals(resolver.hasValuesFieldName("parentDataProduct"), Optional.empty());
     assertEquals(
-        resolver.hasValuesFieldName("parentDataProduct"), Optional.of("hasParentDataProduct"));
+        resolver.unlabeledHasValuesSource("hasParentDataProduct"),
+        Optional.of("parentDataProduct"));
   }
 
   @Test

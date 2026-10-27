@@ -1014,17 +1014,21 @@ public class MultiEntityMappingsBuilder implements MappingsBuilder {
             continue;
           }
           SearchableAnnotation resolved = fieldSpec.getSearchableAnnotation().resolvedForV3();
-          resolved
-              .indexedHasValuesFieldName()
-              .ifPresent(
-                  fieldName ->
-                      rootFields.putIfAbsent(
-                          fieldName, ImmutableMap.of(TYPE, ESUtils.BOOLEAN_FIELD_TYPE)));
-          SearchableAnnotation.sharedHasValuesName(resolved)
-              .ifPresent(
-                  fieldName ->
-                      rootFields.putIfAbsent(
-                          fieldName, ImmutableMap.of(TYPE, ESUtils.BOOLEAN_FIELD_TYPE)));
+          // A has* boolean is a shared-label presence flag. A field with no searchLabel is present
+          // when its own value is present.
+          if (resolved.indexedFieldName().isPresent()) {
+            resolved
+                .indexedHasValuesFieldName()
+                .ifPresent(
+                    fieldName ->
+                        rootFields.putIfAbsent(
+                            fieldName, ImmutableMap.of(TYPE, ESUtils.BOOLEAN_FIELD_TYPE)));
+            SearchableAnnotation.sharedHasValuesName(resolved)
+                .ifPresent(
+                    fieldName ->
+                        rootFields.putIfAbsent(
+                            fieldName, ImmutableMap.of(TYPE, ESUtils.BOOLEAN_FIELD_TYPE)));
+          }
           fieldSpec
               .getSearchableAnnotation()
               .getNumValuesFieldName()
@@ -1445,7 +1449,7 @@ public class MultiEntityMappingsBuilder implements MappingsBuilder {
     mappings.put(fieldName, mappingForField);
 
     // A has* boolean is mapped under the aspect only by copySharedHasValues, and only when it
-    // copy_to's a common search label. A dedicated boolean stays on the root.
+    // copy_to's a search label. A field with no label has no boolean.
     searchableFieldSpec
         .getSearchableAnnotation()
         .getNumValuesFieldName()

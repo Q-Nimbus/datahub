@@ -29,6 +29,7 @@ import com.linkedin.common.urn.Urn;
 import com.linkedin.common.urn.UrnUtils;
 import com.linkedin.data.template.RecordTemplate;
 import com.linkedin.data.template.StringMap;
+import com.linkedin.dataset.DatasetProfile;
 import com.linkedin.dataset.EditableDatasetProperties;
 import com.linkedin.events.metadata.ChangeType;
 import com.linkedin.metadata.aspect.batch.MCLItem;
@@ -445,6 +446,27 @@ public class V3SearchDocumentProjectorTest {
     assertTrue(projected.rootFields().get("hasDescription").isNull());
     assertEquals(
         projected.aspectFields().get("editedDescription").asText(), "An edited description");
+  }
+
+  @Test
+  public void testProfileRowCountDoesNotProjectHasRowCount() throws Exception {
+    V3SearchDocumentProjector realProjector = realProjector();
+    EntityRegistry registry = opContext.getEntityRegistry();
+    EntitySpec dataset = registry.getEntitySpec("dataset");
+    AspectSpec profile = dataset.getAspectSpec("datasetProfile");
+    when(event.getEntitySpec()).thenReturn(dataset);
+    when(event.getAspectSpec()).thenReturn(profile);
+    when(event.getAspectName()).thenReturn(profile.getName());
+    when(event.getPreviousRecordTemplate()).thenReturn(null);
+    DatasetProfile properties = new DatasetProfile().setTimestampMillis(1L).setRowCount(0L);
+    when(event.getRecordTemplate()).thenReturn(properties);
+
+    V3SearchDocumentProjector.ProjectedAspect projected =
+        realProjector.projectAspect(opContext, event).orElseThrow();
+
+    assertFalse(projected.rootFields().has("hasRowCount"));
+    assertFalse(projected.aspectFields().has("hasRowCount"));
+    assertEquals(projected.rootFields().get("rowCount").asLong(), 0L);
   }
 
   @Test
