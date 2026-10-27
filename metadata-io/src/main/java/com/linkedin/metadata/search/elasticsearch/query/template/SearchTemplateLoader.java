@@ -483,18 +483,15 @@ public class SearchTemplateLoader {
     List<String> pendingRemoves = rankingRemoves(ranking);
     String rankingReference = rankingReferenceUrn(ranking);
     if (resolveReferences) {
-      ranking =
+      ResolvedRanking resolved =
           resolveRankingReference(
               operationContext, retriever, urn, ranking, overrides, classpathBridge, urns);
-    }
-    if (resolveReferences && rankingReference != null) {
-      TemplateCopy target = resolve(operationContext, retriever, rankingReference, overrides);
-      lastModified = Math.max(lastModified, target.modifiedAt());
-      if (!urns.contains(rankingReference)) {
-        urns.add(rankingReference);
+      ranking = resolved.ranking();
+      if (rankingReference != null) {
+        lastModified = Math.max(lastModified, resolved.lastModified());
+        builder.chain(List.copyOf(urns));
+        builder.lastModified(lastModified);
       }
-      builder.chain(List.copyOf(urns));
-      builder.lastModified(lastModified);
     }
     if (resolveReferences || !referencesTemplate(ranking)) {
       ranking = applyRankingPatches(ranking, pendingAdds, pendingRemoves, addSatisfiedRemoves);
@@ -710,31 +707,35 @@ public class SearchTemplateLoader {
       base = new SearchTemplateRanking();
       addSatisfiedRemoves.clear();
     }
+    // A ranking is a reference or it is inline. Setting one drops the inherited other.
+    boolean overlayReference = referencesTemplate(overlay);
+    boolean overlayInline = inlineRanking(overlay);
     SearchTemplateRanking merged = new SearchTemplateRanking();
     putString(
         merged::setPreset,
         overlay.hasPreset(),
         overlay.getPreset(),
-        base.hasPreset(),
+        !overlayReference && base.hasPreset(),
         base.getPreset());
     if (overlay.hasWindow()) {
       if (overlay.getWindow() != null) {
         merged.setWindow(overlay.getWindow());
       }
-    } else if (base.hasWindow() && base.getWindow() != null) {
+    } else if (!overlayReference && base.hasWindow() && base.getWindow() != null) {
       merged.setWindow(base.getWindow());
     }
     putString(
         merged::setWindowSizer,
         overlay.hasWindowSizer(),
         overlay.getWindowSizer(),
-        base.hasWindowSizer(),
+        !overlayReference && base.hasWindowSizer(),
         base.getWindowSizer());
     if (overlay.hasParameters()) {
       if (overlay.getParameters() != null && !overlay.getParameters().isEmpty()) {
         merged.setParameters(overlay.getParameters());
       }
-    } else if (base.hasParameters()
+    } else if (!overlayReference
+        && base.hasParameters()
         && base.getParameters() != null
         && !base.getParameters().isEmpty()) {
       merged.setParameters(base.getParameters());
@@ -743,7 +744,7 @@ public class SearchTemplateLoader {
         merged::setTemplate,
         overlay.hasTemplate(),
         overlay.getTemplate(),
-        base.hasTemplate(),
+        !overlayInline && base.hasTemplate(),
         base.getTemplate());
     if (overlay.hasSignals()) {
       if (overlay.getSignals() != null && !overlay.getSignals().isEmpty()) {
@@ -751,7 +752,10 @@ public class SearchTemplateLoader {
       }
       addSatisfiedRemoves.clear();
     } else {
-      if (base.hasSignals() && base.getSignals() != null && !base.getSignals().isEmpty()) {
+      if (!overlayReference
+          && base.hasSignals()
+          && base.getSignals() != null
+          && !base.getSignals().isEmpty()) {
         merged.setSignals(new RankingSignalArray(base.getSignals()));
       }
       mergeSignalPatches(merged, base, overlay, addSatisfiedRemoves);
@@ -760,7 +764,7 @@ public class SearchTemplateLoader {
         merged::setFormula,
         overlay.hasFormula(),
         overlay.getFormula(),
-        base.hasFormula(),
+        !overlayReference && base.hasFormula(),
         base.getFormula());
     return emptyRanking(merged) ? null : merged;
   }
@@ -943,8 +947,8 @@ public class SearchTemplateLoader {
     }
   }
 
-  @Nullable
-  private SearchTemplateRanking resolveRankingReference(
+  @Nonnull
+  private ResolvedRanking resolveRankingReference(
       @Nonnull OperationFingerprint operationContext,
       @Nonnull AspectRetriever retriever,
       @Nonnull String urn,
@@ -956,7 +960,7 @@ public class SearchTemplateLoader {
         || !ranking.hasTemplate()
         || ranking.getTemplate() == null
         || ranking.getTemplate().isBlank()) {
-      return ranking;
+      return new ResolvedRanking(ranking, 0L);
     }
     if (inlineRanking(ranking)) {
       throw new SearchTemplateException("Search template ranking is a reference or it is inline");
@@ -976,7 +980,15 @@ public class SearchTemplateLoader {
       throw new SearchTemplateException(
           "Search template ranking reference must be inline: " + target);
     }
-    return resolved;
+    for (String link : targetMerged.getChain()) {
+      if (urn.equals(link)) {
+        throw new SearchTemplateException("Search template ranking reference cycle at " + link);
+      }
+      if (!urns.contains(link)) {
+        urns.add(link);
+      }
+    }
+    return new ResolvedRanking(resolved, targetMerged.getLastModified());
   }
 
   private static boolean inlineRanking(@Nonnull SearchTemplateRanking ranking) {
@@ -1268,6 +1280,8 @@ public class SearchTemplateLoader {
       return null;
     }
   }
+
+  private record ResolvedRanking(@Nullable SearchTemplateRanking ranking, long lastModified) {}
 
   private record TemplateCopy(@Nonnull SearchTemplateProperties properties, long modifiedAt) {}
 

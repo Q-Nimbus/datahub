@@ -139,7 +139,7 @@ An explicit empty string drops that section, including an inherited `knn`, `rank
 
 `fields` merges by key. A child's `add`, `remove`, and `override` combine with the parent's, and the child's `override` wins when both name the same field. When the parent set `replace`, those child keys apply to that set. A child's `replace` replaces the queried set and discards the parent's `add`, `remove`, and `override`.
 
-`ranking.signals` replaces the inherited signal list. `ranking.add` and `ranking.remove` patch that list by signal name, including a list loaded through `ranking.template`. A new name is appended. The same name replaces that signal and keeps its place. A non-empty `signals` list discards parent patches.
+`ranking.signals` replaces the inherited signal list. `ranking.add` and `ranking.remove` patch that list by signal name, including a list loaded through `ranking.template`. A new name is appended. The same name replaces that signal and keeps its place. A non-empty `signals` list discards parent patches. A `ranking.template` URN replaces inherited inline ranking fields. Inline ranking fields replace an inherited `ranking.template`.
 
 `queryFragments` merges by hole name. Every level that sets a non-empty key adds a fragment, joined root-first with commas. An unset key adds nothing. An empty string drops inherited fragments for that key. See [Query holes](#query-holes).
 
