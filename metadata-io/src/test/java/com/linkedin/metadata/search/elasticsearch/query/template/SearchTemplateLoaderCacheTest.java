@@ -17,12 +17,19 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.linkedin.common.urn.Urn;
 import com.linkedin.common.urn.UrnUtils;
+import com.linkedin.data.template.StringArray;
 import com.linkedin.entity.Aspect;
 import com.linkedin.identity.CorpUserInfo;
 import com.linkedin.metadata.aspect.CachingAspectRetriever;
 import com.linkedin.metadata.aspect.GraphRetriever;
+import com.linkedin.search.template.RankingNormalization;
+import com.linkedin.search.template.RankingNormalizationType;
+import com.linkedin.search.template.RankingSignal;
+import com.linkedin.search.template.RankingSignalArray;
+import com.linkedin.search.template.RankingSignalKind;
 import com.linkedin.search.template.SearchTemplateDialect;
 import com.linkedin.search.template.SearchTemplateProperties;
+import com.linkedin.search.template.SearchTemplateRanking;
 import io.datahubproject.metadata.context.OperationContext;
 import io.datahubproject.metadata.context.RetrieverContext;
 import io.datahubproject.test.metadata.context.TestOperationContexts;
@@ -308,6 +315,26 @@ public class SearchTemplateLoaderCacheTest {
   }
 
   @Test
+  public void testARankingReferenceEditRemergesTheLeaf() {
+    String target = "urn:li:searchTemplate:rescore-default";
+    indexed.put(target, ranked(target, 1.0, 1L));
+    primary.put(target, ranked(target, 1.0, 1L));
+    indexed.put(CHILD, reference(CHILD, target, 1L));
+    primary.put(CHILD, reference(CHILD, target, 1L));
+
+    MergedSearchTemplate first = loader.load(opContext, CHILD);
+    assertEquals(first.getRanking().getSignals().get(0).getBoost(), 1.0);
+    assertTrue(first.getChain().contains(target));
+
+    indexed.put(target, ranked(target, 2.0, 2L));
+    primary.put(target, ranked(target, 2.0, 2L));
+    clock.set(1_000L + TTL_MILLIS + 1);
+    MergedSearchTemplate next = loader.load(opContext, CHILD);
+    assertEquals(next.getRanking().getSignals().get(0).getBoost(), 2.0);
+    assertEquals(next.getLastModified(), 2L);
+  }
+
+  @Test
   public void testAFailedReloadKeepsThePreviousSnapshot() {
     indexed.put(CHILD, body(CHILD, "{ \"match_all\": {} }", 1L));
     MergedSearchTemplate first = loader.load(opContext, CHILD);
@@ -353,6 +380,31 @@ public class SearchTemplateLoaderCacheTest {
   private static SearchTemplateDocuments.Document child(String urn, String parent, long modified) {
     SearchTemplateProperties properties = properties(urn, null);
     properties.setParent(UrnUtils.getUrn(parent));
+    return new SearchTemplateDocuments.Document(properties, modified);
+  }
+
+  private static SearchTemplateDocuments.Document ranked(String urn, double boost, long modified) {
+    SearchTemplateProperties properties = properties(urn, null);
+    properties.setCapabilities(new StringArray("rankingSignals"));
+    RankingSignal signal = new RankingSignal();
+    signal.setName("queryCountPercentileLast30Days");
+    signal.setKind(RankingSignalKind.FIELD_NUMBER);
+    signal.setField("queryCountPercentileLast30Days");
+    signal.setNormalization(new RankingNormalization().setType(RankingNormalizationType.NONE));
+    signal.setBoost(boost);
+    SearchTemplateRanking ranking = new SearchTemplateRanking();
+    ranking.setSignals(new RankingSignalArray(signal));
+    properties.setRanking(ranking);
+    return new SearchTemplateDocuments.Document(properties, modified);
+  }
+
+  private static SearchTemplateDocuments.Document reference(
+      String urn, String target, long modified) {
+    SearchTemplateProperties properties = properties(urn, "{ \"match_all\": {} }");
+    properties.setCapabilities(new StringArray("rankingSignals"));
+    SearchTemplateRanking ranking = new SearchTemplateRanking();
+    ranking.setTemplate(target);
+    properties.setRanking(ranking);
     return new SearchTemplateDocuments.Document(properties, modified);
   }
 
