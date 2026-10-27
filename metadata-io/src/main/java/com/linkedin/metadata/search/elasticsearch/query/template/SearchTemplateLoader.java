@@ -665,6 +665,18 @@ public class SearchTemplateLoader {
     return StructuredPropertyClauses.empty(section);
   }
 
+  private static boolean hasRankingField(@Nonnull SearchTemplateRanking ranking) {
+    return ranking.hasPreset()
+        || ranking.hasWindow()
+        || ranking.hasWindowSizer()
+        || ranking.hasParameters()
+        || ranking.hasTemplate()
+        || ranking.hasSignals()
+        || ranking.hasAdd()
+        || ranking.hasRemove()
+        || ranking.hasFormula();
+  }
+
   public static boolean emptyRanking(@Nullable SearchTemplateRanking ranking) {
     if (ranking == null) {
       return true;
@@ -699,7 +711,9 @@ public class SearchTemplateLoader {
       @Nullable SearchTemplateRanking base,
       @Nullable SearchTemplateRanking overlay,
       @Nonnull Set<String> addSatisfiedRemoves) {
-    if (overlay == null || emptyRanking(overlay)) {
+    // A record with no fields drops the section. A set field, including an empty
+    // list or string, drops that field and keeps the rest.
+    if (overlay == null || !hasRankingField(overlay)) {
       addSatisfiedRemoves.clear();
       return null;
     }
@@ -708,14 +722,17 @@ public class SearchTemplateLoader {
       addSatisfiedRemoves.clear();
     }
     // A ranking is a reference or it is inline. Setting one drops the inherited other.
+    // A non-empty signal list leaves preset unset.
     boolean overlayReference = referencesTemplate(overlay);
     boolean overlayInline = inlineRanking(overlay);
+    boolean overlaySignals =
+        overlay.hasSignals() && overlay.getSignals() != null && !overlay.getSignals().isEmpty();
     SearchTemplateRanking merged = new SearchTemplateRanking();
     putString(
         merged::setPreset,
         overlay.hasPreset(),
         overlay.getPreset(),
-        !overlayReference && base.hasPreset(),
+        !overlayReference && !overlaySignals && base.hasPreset(),
         base.getPreset());
     if (overlay.hasWindow()) {
       if (overlay.getWindow() != null) {
